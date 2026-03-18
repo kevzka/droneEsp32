@@ -60,7 +60,16 @@ int main() {
             continue;
         }
 
+        //print buffer length
+        std::cout << "Received " << n << " bytes" << std::endl;
         buffer[n] = '\0';
+        //print loop print buffer per byte data raw
+        std::cout << "Raw data: ";
+        for (int i = 0; i < n; i++) {
+            std::cout << static_cast<int>(static_cast<unsigned char>(buffer[i])) << " ";
+        }
+        std::cout << std::endl;
+
         const char *clientIp = inet_ntoa(cliaddr.sin_addr);
         int clientPort = ntohs(cliaddr.sin_port);
         std::cout << "From " << clientIp << ":" << clientPort << " -> " << buffer << std::endl;
