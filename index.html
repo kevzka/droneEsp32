@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8" />
+  <title>Gamepad Sender</title>
+</head>
+<body>
+  <pre id="log">Menunggu gamepad...</pre>
+
+  <script>
+    // ─── Config ───────────────────────────────────────────────────
+    const WS_URL = 'ws://localhost:8080';
+
+    // ─── Binary Packet Format (13 bytes) ─────────────────────────
+    // Byte  0   : buttons bitmask LOW  (A B X Y LB RB Back Start)
+    // Byte  1   : buttons bitmask HIGH (LS RS Up Down Left Right Home)
+    // Byte  2   : LT  0–255
+    // Byte  3   : RT  0–255
+    // Byte  4-5 : Left  Stick X  (Int16, -32768~32767)
+    // Byte  6-7 : Left  Stick Y  (Int16)
+    // Byte  8-9 : Right Stick X  (Int16)
+    // Byte 10-11: Right Stick Y  (Int16)
+    // Byte 12   : sequence number (0–255, rollover)
+    // Total: 13 bytes vs ~200+ bytes JSON → ~15x lebih kecil
+
+    function packGamepad(gp, seq) {
+      const buf  = new ArrayBuffer(13);
+      const view = new DataView(buf);
+
+      // Buttons bitmask
+      const b = gp.buttons;
+      let lo = 0, hi = 0;
+      if (b[0].pressed)  lo |= 0x01; // A
+      if (b[1].pressed)  lo |= 0x02; // B
+      if (b[2].pressed)  lo |= 0x04; // X
+      if (b[3].pressed)  lo |= 0x08; // Y
+      if (b[4].pressed)  lo |= 0x10; // LB
+      if (b[5].pressed)  lo |= 0x20; // RB
+      if (b[8].pressed)  lo |= 0x40; // Back
+      if (b[9].pressed)  lo |= 0x80; // Start
+      if (b[10].pressed) hi |= 0x01; // LS
+      if (b[11].pressed) hi |= 0x02; // RS
+      if (b[12]?.pressed) hi |= 0x04; // Up
+      if (b[13]?.pressed) hi |= 0x08; // Down
+      if (b[14]?.pressed) hi |= 0x10; // Left
+      if (b[15]?.pressed) hi |= 0x20; // Right
+      if (b[16]?.pressed) hi |= 0x40; // Home
+
+      view.setUint8(0, lo);
+      view.setUint8(1, hi);
+      view.setUint8(2, Math.round(b[6].value * 255)); // LT
+      view.setUint8(3, Math.round(b[7].value * 255)); // RT
+
+      // Axes: float -1~1 → Int16 -32768~32767
+      view.setInt16(4,  Math.round(gp.axes[0] * 32767), true); // LX
+      view.setInt16(6,  Math.round(gp.axes[1] * 32767), true); // LY
+      view.setInt16(8,  Math.round(gp.axes[2] * 32767), true); // RX
+      view.setInt16(10, Math.round(gp.axes[3] * 32767), true); // RY
+
+      view.setUint8(12, seq & 0xFF); // sequence
+
+      return buf;
+    }
+
+    // ─── WebSocket ────────────────────────────────────────────────
+    let ws = null;
+    let wsReady = false;
+
+    function connectWS() {
+      ws = new WebSocket(WS_URL);
+      ws.binaryType = 'arraybuffer';
+
+      ws.onopen  = () => { wsReady = true;  log('✅ WS terhubung'); };
+      ws.onclose = () => { wsReady = false; log('🔴 WS putus, reconnect 1s...'); setTimeout(connectWS, 1000); };
+      ws.onerror = () => { wsReady = false; };
+    }
+
+    // ─── Game Loop ────────────────────────────────────────────────
+    let seq = 0;
+    let lastBuf = null;
+
+    function loop() {
+      const gp = navigator.getGamepads()[0];
+
+      if (gp && gp.connected && wsReady) {
+        const buf  = packGamepad(gp, seq);
+        const view = new Uint8Array(buf);
+
+        // Kirim HANYA jika ada perubahan (skip byte 12 = seq)
+        const changed = !lastBuf || view.slice(0, 12).some((v, i) => v !== lastBuf[i]);
+
+        if (changed) {
+          ws.send(buf);
+          lastBuf = view.slice(0, 12);
+          seq++;
+          logGamepad(gp, view, buf);
+        }
+      }
+
+      requestAnimationFrame(loop);
+    }
+
+    // ─── Events ───────────────────────────────────────────────────
+    window.addEventListener('gamepadconnected', (e) => {
+      log(`🎮 Gamepad: ${e.gamepad.id}`);
+      loop();
+    });
+
+    window.addEventListener('gamepaddisconnected', () => {
+      log('❌ Gamepad dicabut');
+    });
+
+    console.log('connect to ws');
+
+    connectWS();
+
+    // ─── Debug UI ─────────────────────────────────────────────────
+    const el = document.getElementById('log');
+    function log(msg) { el.textContent = msg; }
+    function logGamepad(gp, v, buf) {
+      const buffBit = new Int8Array(buf);
+      let tmpString = ``;
+      for(let i=0; i<buffBit.length; i++) {
+        tmpString += `${i}: ${buffBit[i]}\n`;
+      }
+      const btns = [];
+      const names = ['A','B','X','Y','LB','RB','Back','Start'];
+      names.forEach((n, i) => { if (v[0] & (1 << i)) btns.push(n); });
+      ['LS','RS','↑','↓','←','→','⊙'].forEach((n, i) => { if (v[1] & (1 << i)) btns.push(n); });
+
+      const lx = (gp.axes[0]).toFixed(2), ly = (gp.axes[1]).toFixed(2);
+      const rx = (gp.axes[2]).toFixed(2), ry = (gp.axes[3]).toFixed(2);
+      const lt = (gp.buttons[6].value).toFixed(2);
+      const rt = (gp.buttons[7].value).toFixed(2);
+
+      el.textContent =
+        `Btn : ${btns.join(' ') || '—'}\n` +
+        `L   : (${lx}, ${ly})\n` +
+        `R   : (${rx}, ${ry})\n` +
+        `LT/RT: ${lt} / ${rt}\n` +
+        `Pkt : #${seq} (13 bytes)\n`+
+        `${tmpString}`;
+    }
+  </script>
+</body>
+</html>
