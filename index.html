@@ -118,10 +118,23 @@
     const el = document.getElementById('log');
     function log(msg) { el.textContent = msg; }
     function logGamepad(gp, v, buf) {
-      const buffBit = new Int8Array(buf);
-      let tmpString = ``;
-      for(let i=0; i<buffBit.length; i++) {
-        tmpString += `${i}: ${buffBit[i]}\n`;
+      const bytes = new Uint8Array(buf);
+      const dv = new DataView(buf);
+      const normalizeAxis = (raw) => (raw === -32768 ? -1 : raw / 32767);
+
+      const packedLX = normalizeAxis(dv.getInt16(4, true)).toFixed(2);
+      const packedLY = normalizeAxis(dv.getInt16(6, true)).toFixed(2);
+      const packedRX = normalizeAxis(dv.getInt16(8, true)).toFixed(2);
+      const packedRY = normalizeAxis(dv.getInt16(10, true)).toFixed(2);
+
+      let tmpString = `--- Axes (decoded from bytes) ---\n`;
+      tmpString += `LX: ${packedLX}\n`;
+      tmpString += `LY: ${packedLY}\n`;
+      tmpString += `RX: ${packedRX}\n`;
+      tmpString += `RY: ${packedRY}\n`;
+      tmpString += `-------------------------------\n`;
+      for (let i = 0; i < bytes.length; i++) {
+        tmpString += `${i}: ${bytes[i]}\n`;
       }
       const btns = [];
       const names = ['A','B','X','Y','LB','RB','Back','Start'];
